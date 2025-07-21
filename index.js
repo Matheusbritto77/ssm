@@ -7,14 +7,17 @@ const PORT = 8081;
 
 (async () => {
   const browser = await puppeteer.launch({
-    headless: false,
-    args: [
-      '--use-fake-ui-for-media-stream',
-      '--use-fake-device-for-media-stream',
-      '--allow-file-access-from-files',
-      '--use-file-for-fake-audio-capture=audio.wav', // exemplo, substitua por loopback se quiser real
-    ]
-  });
+  headless: false,
+  args: [
+    '--no-sandbox',                      // ← ESSENCIAL PARA EXECUTAR COMO ROOT
+    '--disable-setuid-sandbox',
+    '--use-fake-ui-for-media-stream',
+    '--use-fake-device-for-media-stream',
+    '--allow-file-access-from-files',
+    '--use-file-for-fake-audio-capture=audio.wav'
+  ]
+});
+
 
   const page = await browser.newPage();
   await page.goto('file://' + path.join(__dirname, 'public/browser.html'));
