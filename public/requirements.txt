@@ -1,4 +1,4 @@
 aiohttp
 websockets
 pyppeteer
-webrtcvad
+webrtcvad-wheels
