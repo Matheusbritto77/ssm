@@ -1,35 +1,203 @@
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
-  <meta charset="UTF-8" />
-  <title>Navegador Zumbi</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Puppeteer STT Microfone Virtual</title>
+    <style>
+        body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; background-color: #f0f0f0; }
+        .status { font-size: 1.2em; margin-bottom: 20px; color: #333; }
+        .log-area { width: 80%; height: 200px; border: 1px solid #ccc; padding: 10px; overflow-y: scroll; background-color: #fff; font-family: monospace; font-size: 0.9em; }
+    </style>
 </head>
 <body>
-<script>
-  let recognition;
+    <h1>Microfone Virtual STT</h1>
+    <p class="status" id="status-display">Aguardando áudio...</p>
+    <div class="log-area" id="log-area"></div>
 
-  window.startRecognition = () => {
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    recognition = new SpeechRecognition();
-    recognition.lang = 'pt-BR';
-    recognition.continuous = true;
-    recognition.interimResults = false;
+    <script>
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        const SpeechGrammarList = window.SpeechGrammarList || window.webkitSpeechGrammarList;
+        const SpeechRecognitionEvent = window.SpeechRecognitionEvent || window.webkitSpeechRecognitionEvent;
 
-    recognition.onresult = (event) => {
-      const transcript = Array.from(event.results)
-        .map(r => r[0].transcript)
-        .join('');
-      window.onTranscription(transcript);
-    };
+        let recognition;
+        let audioContext;
+        let mediaStreamDestination; // Nó de destino para o MediaStream
+        let mediaStreamSource;      // Nó de áudio para injetar dados
 
-    recognition.start();
-    console.log("🎤 Iniciada transcrição...");
-  };
+        const logArea = document.getElementById('log-area');
+        const statusDisplay = document.getElementById('status-display');
 
-  window.stopRecognition = () => {
-    recognition && recognition.stop();
-    console.log("🛑 Parada transcrição.");
-  };
-</script>
+        function appendLog(message, level = 'INFO') {
+            const p = document.createElement('p');
+            p.textContent = `[${new Date().toLocaleTimeString()}] [${level}] ${message}`;
+            logArea.appendChild(p);
+            logArea.scrollTop = logArea.scrollHeight; // Auto-scroll
+            console.log(`[BROWSER LOG] ${message}`); // Log para o console do Puppeteer
+        }
+
+        function updateStatus(message, color = '#333') {
+            statusDisplay.textContent = message;
+            statusDisplay.style.color = color;
+        }
+
+        // --- Configuração da Web Speech API para STT ---
+        function setupRecognition() {
+            if (!SpeechRecognition) {
+                appendLog('Web Speech API não suportada neste navegador.', 'ERROR');
+                updateStatus('STT não suportado.', 'red');
+                return;
+            }
+
+            recognition = new SpeechRecognition();
+            recognition.continuous = true; // Continua escutando
+            recognition.interimResults = false; // Apenas resultados finais
+            recognition.lang = 'pt-BR'; // Idioma
+
+            recognition.onstart = () => {
+                appendLog('Reconhecimento de fala iniciado.', 'INFO');
+                updateStatus('Transcrevendo...', 'blue');
+            };
+
+            recognition.onresult = (event) => {
+                let finalTranscript = '';
+                for (let i = event.resultIndex; i < event.results.length; ++i) {
+                    const transcript = event.results[i][0].transcript;
+                    if (event.results[i].isFinal) {
+                        finalTranscript += transcript;
+                    }
+                }
+                if (finalTranscript) {
+                    appendLog('Transcrição final: ' + finalTranscript, 'SUCCESS');
+                    // Chama a função exposta pelo Puppeteer para enviar ao Node.js
+                    if (window.onTranscription) {
+                        window.onTranscription(finalTranscript);
+                    } else {
+                        appendLog('window.onTranscription não está definido!', 'ERROR');
+                    }
+                }
+            };
+
+            recognition.onerror = (event) => {
+                appendLog('Erro de reconhecimento de fala: ' + event.error, 'ERROR');
+                updateStatus('Erro no STT.', 'red');
+                // Tenta reiniciar se o erro não for de "no-speech"
+                if (event.error !== 'no-speech' && event.error !== 'aborted') {
+                    appendLog('Tentando reiniciar reconhecimento...', 'WARN');
+                    recognition.stop();
+                    setTimeout(() => startRecognition(), 1000);
+                }
+            };
+
+            recognition.onend = () => {
+                appendLog('Reconhecimento de fala encerrado.', 'INFO');
+                updateStatus('Aguardando áudio...', 'gray');
+                // Se a transcrição contínua for desejada, pode-se iniciar aqui novamente
+                // No nosso caso, o servidor enviará o sinal de start/stop
+            };
+        }
+
+        // --- Configuração da Injeção de Áudio (Microfone Virtual) ---
+        async function setupAudioInjection() {
+            appendLog('Configurando injeção de áudio virtual...', 'INFO');
+            try {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+                appendLog(`AudioContext criado com sampleRate: ${audioContext.sampleRate}`, 'INFO');
+
+                // Cria um nó de destino para MediaStream, que atuará como microfone
+                mediaStreamDestination = audioContext.createMediaStreamDestination();
+                appendLog('MediaStreamDestination criado.', 'INFO');
+
+                // Cria um SourceNode que receberá os buffers de áudio
+                mediaStreamSource = audioContext.createBufferSource();
+                mediaStreamSource.connect(mediaStreamDestination); // Conecta ao destino
+
+                // Pega o MediaStream do destino e injeta no reconhecimento de fala
+                // Isto "hackeia" o Web Speech API para usar nosso áudio injetado
+                const mediaStream = mediaStreamDestination.stream;
+                appendLog('MediaStream para STT criado.', 'INFO');
+
+                // Aqui é onde você alimenta o recognition com o MediaStream
+                recognition.mediaStream = mediaStream;
+                appendLog('MediaStream conectado ao SpeechRecognition.', 'INFO');
+
+            } catch (error) {
+                appendLog('Erro ao configurar injeção de áudio: ' + error.message, 'ERROR');
+                updateStatus('Erro no áudio.', 'red');
+            }
+        }
+
+        // --- Funções Globais Chamadas pelo Puppeteer (Node.js) ---
+
+        // Inicia o reconhecimento de fala
+        window.startRecognition = async () => {
+            if (recognition) {
+                // Certifica-se de que o AudioContext está em estado "running"
+                if (audioContext && audioContext.state === 'suspended') {
+                    await audioContext.resume();
+                    appendLog('AudioContext resumed.', 'INFO');
+                }
+                recognition.start();
+                appendLog('Comando: iniciar reconhecimento.', 'COMMAND');
+            } else {
+                appendLog('Reconhecimento não configurado.', 'ERROR');
+            }
+        };
+
+        // Para o reconhecimento de fala
+        window.stopRecognition = () => {
+            if (recognition) {
+                recognition.stop();
+                appendLog('Comando: parar reconhecimento.', 'COMMAND');
+            }
+        };
+
+        // Função para injetar buffers de áudio recebidos do Node.js
+        window.injectAudioBuffer = (audioDataArray) => {
+            if (!audioContext || !mediaStreamDestination) {
+                appendLog('Áudio contexto ou destino não prontos para injeção.', 'ERROR');
+                return;
+            }
+
+            // Converter o Array (recebido via JSON.stringify) de volta para Int16Array
+            const audioBufferInt16 = new Int16Array(audioDataArray);
+            
+            // Cria um Buffer de Áudio para o AudioContext
+            // 1 canal, comprimento do array, sampleRate
+            const newAudioBuffer = audioContext.createBuffer(
+                1, 
+                audioBufferInt16.length, 
+                audioContext.sampleRate
+            );
+            
+            // Copia os dados para o canal do AudioBuffer (Float32Array)
+            const nowBuffering = newAudioBuffer.getChannelData(0);
+            for (let i = 0; i < audioBufferInt16.length; i++) {
+                // Normaliza o Int16 para Float32 no range de -1.0 a 1.0
+                nowBuffering[i] = audioBufferInt16[i] / 32768.0; 
+            }
+
+            // Cria um SourceNode a partir do novo AudioBuffer
+            const source = audioContext.createBufferSource();
+            source.buffer = newAudioBuffer;
+
+            // Conecta o source ao destino (microfone virtual)
+            source.connect(mediaStreamDestination);
+            
+            // Inicia a reprodução do buffer (injetando no microfone virtual)
+            source.start(0); // Inicia imediatamente
+
+            // console.log(`[NAVEGADOR] Injetado ${audioBufferInt16.length} amostras de áudio.`);
+        };
+
+        // --- Inicialização ---
+        document.addEventListener('DOMContentLoaded', async () => {
+            appendLog('DOM Content Loaded. Setting up STT and audio injection.', 'INFO');
+            setupRecognition();
+            await setupAudioInjection();
+            updateStatus('Pronto para receber áudio.', 'green');
+            // O reconhecimento não inicia automaticamente, espera o sinal do Node.js
+        });
+    </script>
 </body>
 </html>
