@@ -2,8 +2,14 @@
 const puppeteer = require('puppeteer');
 const WebSocket = require('ws');
 const path = require('path');
+const fs = require('fs');
+const { Writable } = require('stream');
+const wav = require('wav');
+const Vad = require('node-webrtcvad');
 
 const PORT = 8081;
+const TEMP_WAV = path.join(__dirname, 'audio.wav');
+const vad = new Vad(Vad.Mode.AGGRESSIVE);
 
 (async () => {
   const browser = await puppeteer.launch({
@@ -14,7 +20,7 @@ const PORT = 8081;
       '--use-fake-ui-for-media-stream',
       '--use-fake-device-for-media-stream',
       '--allow-file-access-from-files',
-      '--use-file-for-fake-audio-capture=audio.wav',
+      `--use-file-for-fake-audio-capture=${TEMP_WAV}`,
       '--disable-gpu',
       '--disable-dev-shm-usage',
       '--disable-software-rasterizer',
@@ -45,8 +51,23 @@ const PORT = 8081;
       ws.send(JSON.stringify(response));
     });
 
-    let audioBuffer = [];
-    let transcriptionStarted = false;
+    let audioChunks = [];
+    let isRecording = false;
+    let silenceCounter = 0;
+
+    const resetSession = async () => {
+      console.log('\u{1F39B} Gravando WAV...');
+      const writer = new wav.FileWriter(TEMP_WAV, {
+        channels: 1,
+        sampleRate: 16000,
+        bitDepth: 16
+      });
+      for (const chunk of audioChunks) writer.write(chunk);
+      writer.end();
+
+      console.log('\u{1F4C1} WAV salvo, iniciando transcrição...');
+      await page.reload();
+    };
 
     ws.on('message', async (message) => {
       if (typeof message === 'string') {
@@ -54,18 +75,25 @@ const PORT = 8081;
           const data = JSON.parse(message);
           if (data.config) {
             console.log('[Vosk] Configuração recebida:', data);
-            // Começa transcrição ao receber config
-            transcriptionStarted = true;
-            await page.evaluate(() => window.startRecognition());
+            isRecording = true;
           }
         } catch (err) {
-          console.error('Erro ao processar mensagem JSON:', err);
+          console.error('Erro ao processar JSON:', err);
         }
-      } else if (Buffer.isBuffer(message)) {
-        if (transcriptionStarted) {
-          // Ignorado: audio em tempo real não é interpretado diretamente pelo navegador
-          // Use reconhecimento do navegador via WebSpeech
-          // Aqui você pode simular entrada se quiser
+      } else if (Buffer.isBuffer(message) && isRecording) {
+        audioChunks.push(message);
+
+        const isSpeech = await vad.processAudio(message, 16000);
+        if (isSpeech) {
+          silenceCounter = 0;
+        } else {
+          silenceCounter++;
+          if (silenceCounter > 10) { // ~1 segundo de silêncio
+            isRecording = false;
+            silenceCounter = 0;
+            await resetSession();
+            audioChunks = [];
+          }
         }
       }
     });

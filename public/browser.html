@@ -2,67 +2,63 @@
 <html lang="pt-BR">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Navegador Zumbi - Reconhecimento de Voz</title>
+  <title>Reconhecimento no Navegador</title>
 </head>
 <body>
   <script>
-    (() => {
-      let recognition;
+    let recognition;
 
-      function log(msg) {
-        console.log(`[🎙️ Reconhecimento] ${msg}`);
+    async function playAudioThenRecognize() {
+      const audio = new Audio('audio.wav');
+      return new Promise((resolve, reject) => {
+        audio.onended = () => {
+          resolve();
+        };
+        audio.onerror = (e) => {
+          reject(e);
+        };
+        audio.play();
+      });
+    }
+
+    window.startRecognition = async () => {
+      try {
+        await playAudioThenRecognize();
+
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        recognition = new SpeechRecognition();
+        recognition.lang = 'pt-BR';
+        recognition.continuous = false;
+        recognition.interimResults = false;
+
+        recognition.onresult = (event) => {
+          const transcript = Array.from(event.results)
+            .map(result => result[0].transcript)
+            .join('')
+            .trim();
+          console.log('📝 Texto transcrito:', transcript);
+          window.onTranscription(transcript);
+        };
+
+        recognition.onerror = (event) => {
+          console.error('❌ Erro no reconhecimento:', event.error);
+          window.onTranscription('');
+        };
+
+        recognition.start();
+        console.log('🎤 Iniciando reconhecimento...');
+      } catch (err) {
+        console.error('Erro ao tocar áudio ou iniciar reconhecimento:', err);
+        window.onTranscription('');
       }
+    };
 
-      // Verificação de suporte
-      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-
-      if (!SpeechRecognition) {
-        log("❌ API Web Speech não é suportada neste navegador.");
-        return;
+    window.stopRecognition = () => {
+      if (recognition) {
+        recognition.stop();
+        console.log('🛑 Reconhecimento interrompido.');
       }
-
-      // Inicializa reconhecimento
-      window.startRecognition = () => {
-        try {
-          recognition = new SpeechRecognition();
-          recognition.lang = 'pt-BR';
-          recognition.continuous = true;
-          recognition.interimResults = false;
-
-          recognition.onstart = () => log("🔴 Reconhecimento de voz iniciado.");
-          recognition.onend = () => log("🛑 Reconhecimento de voz finalizado.");
-          recognition.onerror = (event) => log(`❗ Erro: ${event.error}`);
-
-          recognition.onresult = (event) => {
-            const transcript = Array.from(event.results)
-              .map(result => result[0].transcript)
-              .join(' ')
-              .trim();
-
-            if (transcript) {
-              log(`✅ Texto reconhecido: "${transcript}"`);
-              if (typeof window.onTranscription === 'function') {
-                window.onTranscription(transcript);
-              } else {
-                log("⚠️ Função window.onTranscription não está definida.");
-              }
-            }
-          };
-
-          recognition.start();
-        } catch (err) {
-          log(`🚨 Erro ao iniciar reconhecimento: ${err.message}`);
-        }
-      };
-
-      window.stopRecognition = () => {
-        if (recognition) {
-          recognition.stop();
-          log("⏹️ Reconhecimento de voz parado manualmente.");
-        }
-      };
-    })();
+    };
   </script>
 </body>
 </html>
