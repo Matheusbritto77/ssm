@@ -2,63 +2,33 @@
 <html lang="pt-BR">
 <head>
   <meta charset="UTF-8" />
-  <title>Reconhecimento no Navegador</title>
+  <title>Navegador Zumbi</title>
 </head>
 <body>
-  <script>
-    let recognition;
+<script>
+  let recognition;
 
-    async function playAudioThenRecognize() {
-      const audio = new Audio('audio.wav');
-      return new Promise((resolve, reject) => {
-        audio.onended = () => {
-          resolve();
-        };
-        audio.onerror = (e) => {
-          reject(e);
-        };
-        audio.play();
-      });
-    }
+  window.startRecognition = () => {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    recognition = new SpeechRecognition();
+    recognition.lang = 'pt-BR';
+    recognition.continuous = false;
+    recognition.interimResults = false;
 
-    window.startRecognition = async () => {
-      try {
-        await playAudioThenRecognize();
-
-        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-        recognition = new SpeechRecognition();
-        recognition.lang = 'pt-BR';
-        recognition.continuous = false;
-        recognition.interimResults = false;
-
-        recognition.onresult = (event) => {
-          const transcript = Array.from(event.results)
-            .map(result => result[0].transcript)
-            .join('')
-            .trim();
-          console.log('📝 Texto transcrito:', transcript);
-          window.onTranscription(transcript);
-        };
-
-        recognition.onerror = (event) => {
-          console.error('❌ Erro no reconhecimento:', event.error);
-          window.onTranscription('');
-        };
-
-        recognition.start();
-        console.log('🎤 Iniciando reconhecimento...');
-      } catch (err) {
-        console.error('Erro ao tocar áudio ou iniciar reconhecimento:', err);
-        window.onTranscription('');
-      }
+    recognition.onresult = (event) => {
+      const text = Array.from(event.results)
+        .map(r => r[0].transcript).join('');
+      window.onTranscription(text);
     };
 
-    window.stopRecognition = () => {
-      if (recognition) {
-        recognition.stop();
-        console.log('🛑 Reconhecimento interrompido.');
-      }
-    };
-  </script>
+    recognition.start();
+    console.log("🎤 Iniciando reconhecimento...");
+  };
+
+  window.stopRecognition = () => {
+    recognition && recognition.stop();
+    console.log("🛑 Parando reconhecimento...");
+  };
+</script>
 </body>
 </html>
