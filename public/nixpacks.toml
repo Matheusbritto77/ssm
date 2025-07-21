@@ -1,8 +1,8 @@
 [phases.setup]
-nixPkgs = ["python3", "python3Packages.pip"]
+nixPkgs = ["python3", "ffmpeg"]
 
 [phases.install]
 cmds = ["pip install -r requirements.txt"]
 
 [phases.start]
-cmd = "python server.py"
+cmd = "python main.py"
